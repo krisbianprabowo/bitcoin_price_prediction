@@ -13,6 +13,7 @@ import math
 from sklearn.preprocessing import MinMaxScaler,StandardScaler, RobustScaler
 import plotly.graph_objects as go
 import plotly.express as px
+import random
 
 #------------------------------load model-----------------------------------#
 with(open("save_models/scale_pipe_3_features.pkl", "rb")) as file:
@@ -57,17 +58,35 @@ def generate_impact_vad(compound_tweet) :
     impact_score = (coef_verified * (log_follower+1) * compound_tweet.compound)+0.2
     return impact_score
 #------------------------------load data-----------------------------------#
-df = pd.read_csv('inference/BTCUSDT-1h-2022-02.csv', header=None)
-df_sentiment = pd.read_csv('dataset/sampling_impact_score_all.csv', index_col=0)
-df = df.rename(columns={0: 'open_time', 1:'open', 2:'high', 3:'low', 4:'close', 5:'volume', 6: 'close_time', 7: 'quote_asset_volume', 8: 'number_of_trades', 9: 'taker_buy_asset_volume', 10: 'taker_buy_quote_asset_volume', 11: 'ignore'})
-
+# df = pd.read_csv('inference/BTCUSDT-1h-2022-02.csv', header=None)
+df = pd.read_csv('historical_prices/BTCUSDT_1h_2022_2022.csv', index_col=0)
+df_sentiment = pd.read_csv('dataset/sampling_2022_april.csv', index_col=0)
+df_sentiment.reset_index(drop=True, inplace=True)
+df= df.rename(columns={'0': 'open_time', '1':'open', '2':'high', '3':'low', '4':'close', '5':'volume', '6': 'close_time', '7': 'quote_asset_volume', '8': 'number_of_trades', '9': 'taker_buy_asset_volume', '10': 'taker_buy_quote_asset_volume', '11': 'ignore'})
 
 df['open_time_conv'] = pd.to_datetime(df['open_time'], unit='ms')
 
+#-------------------------- count sentiment avg----------------------------
 df_sentiment['date'] = pd.to_datetime(df_sentiment['date'])
 df_sentiment['days'] = pd.to_datetime(df_sentiment['date']).dt.date
+sid = SentimentIntensityAnalyzer()
+# df_sentiment['date_days'] = pd.to_datetime(df_sentiment['date_days']).dt.date
+df_sentiment['text'] = df_sentiment['text'].apply(str)
+df_sentiment['cleaned_text'] = df_sentiment['text'].apply(cleaning)
+df_sentiment['vader'] = df_sentiment['cleaned_text'].apply(lambda desc: sid.polarity_scores(desc))
+df_sentiment['compound'] = df_sentiment['vader'].apply(lambda score_dict: score_dict['compound'])
+
+df_sentiment['impact_score_only'] = df_sentiment.apply(generate_impact_score,axis=1)
+
+df_sentiment['impact_score_var'] = df_sentiment.apply(generate_impact_vad,axis=1)
+df_sentiment['impact_score_var_avg'] = df_sentiment.groupby(df_sentiment['date'].dt.date)['impact_score_var'].transform('mean')
+
+
 df_sentiment_avg = df_sentiment.drop_duplicates(subset='days', keep='first')
-daterange = pd.date_range("2022-02-01", "2022-02-28")
+first_date = df_sentiment_avg['days'].iloc[0]
+last_date = df_sentiment_avg['days'].iloc[len(df_sentiment_avg)-1]
+daterange = pd.date_range(first_date, last_date)
+df_sentiment_avg['impact_score_tb_avg'] = 0
 for date in daterange:
     if date not in df_sentiment_avg['days'].values:
         df_sentiment_avg = df_sentiment_avg.append({'days': date, 'impact_score_var_avg': 0, 'impact_score_tb_avg': 0}, ignore_index=True)
@@ -131,7 +150,7 @@ with hp:
 with lp:
     low_p = st.number_input('Low Price', 0.00, value=43000.00, step=0.01)
 with vl:
-    volume_p = st.number_input('volume', 0.00, value=50.00, step=0.01)
+    volume_p = st.number_input('volume', 0.00, value=1500.00, step=0.01)
 
 predict = st.button('Predict!')
 
@@ -146,13 +165,58 @@ predict = st.button('Predict!')
 # col2.metric('Low',10) 
 # col3.metric('Volume',10) 
 
+#---------------------------insert data -----------------------------------#
+data = [text1, fol1, ver1]
+
+columns = ['text', 'user_followers', 'user_verified']
+new_data = pd.DataFrame([data], columns=columns)
+new_data.loc[len(new_data)] = ([text2, fol2, ver2])
+new_data.loc[len(new_data)] = ([text3, fol3, ver3])
+
+sid = SentimentIntensityAnalyzer()
+new_data['cleaned_text'] = new_data['text'].apply(cleaning)
+new_data['vader'] = new_data['cleaned_text'].apply(lambda desc: sid.polarity_scores(desc))
+new_data['compound'] = new_data['vader'].apply(lambda score_dict: score_dict['compound'])
+
+new_data['impact_score_only'] = new_data.apply(generate_impact_score,axis=1)
+
+new_data['impact_score_var'] = new_data.apply(generate_impact_vad,axis=1)
+new_data['impact_score_var_avg'] = new_data['impact_score_var'].mean()
+
+sentimen_result = new_data['impact_score_var_avg'].iloc[0]
+sentimen_eval = np.where(sentimen_result > 0.66, 'Positive 😎', np.where(sentimen_result < -0.66, 'Negative 🤒', 'Neutral/Unclear 🙂')).item()
+
+open_p = open_p
+close_p = close_p
+high_p = high_p
+low_p = low_p
+volume_p = volume_p
+open_time = df_merge['open_time'].loc[len(df_merge)-1] + 3600000
+close_time = df_merge['close_time'].loc[len(df_merge)-1] + 3600000
+# volume = random.randrange(800, 2000)
+# volume = volume * random.random()
+quote_asset_volume = volume_p * close_p 
+number_of_trades = random.randrange(50000, 200000)
+taker_buy_asset_volume = volume_p*0.8
+taker_buy_quote_asset_volume = taker_buy_asset_volume*close_p
+ignore = 0
+open_time_conv = pd.to_datetime(open_time, unit='ms')
+days = str(pd.to_datetime(open_time_conv).strftime('%Y-%m-%d'))
+impact_score_var_avg = sentimen_result
+impact_score_tb_avg = 0
+
 #--------------------Prediction--------------------------------------------#
-row_inf = 7 * 24
-df_merge.loc[len(df_merge)] = close_p
+
+df_merge.loc[len(df_merge)]= [open_time, open_p, high_p, low_p, close_p, volume_p, close_time, quote_asset_volume, number_of_trades, taker_buy_asset_volume, taker_buy_quote_asset_volume, ignore, open_time_conv, days, impact_score_var_avg, impact_score_tb_avg]
+# row_inf = 6 * 24
+# df_merge.loc[len(df_merge)] = close_p
 df_merge['MA5'] = df_merge['close'].rolling(window=5).mean()
-df_merge['impact_score_var_avg'].iloc[len(df_merge)-1] = 0
+# df_merge['impact_score_var_avg'].iloc[len(df_merge)-1] = df_merge['impact_score_var_avg'].iloc[len(df_merge)-2]
 df_merge.dropna(inplace=True)
-df_selected = df_merge[len(df_merge)-row_inf:].loc[:, ['close', 'MA5', 'impact_score_var_avg']]
+# df_merge_test = df_merge.astype(str)
+# st.dataframe(df_merge_test)
+# df_selected = df_merge[len(df_merge)-row_inf:].loc[:, ['close', 'MA5', 'impact_score_var_avg']]
+df_selected = df_merge.loc[:, ['close', 'MA5', 'impact_score_var_avg']]
 df_scaled = preprocess.transform(df_selected.values[len(df_selected)-5:])
 df_scaled_pred = df_scaled.reshape(-1, 5, 3)
 
@@ -178,16 +242,16 @@ if predict==True:
         fig, ax = plt.subplots(figsize=(10, 6))
         plt.plot(series, ".-", color="#E91D9E")
         if y is not None:
-            plt.plot(row_inf+1, y, "bx", markersize=10, color="blue")
+            plt.plot(len(df_merge)+1, y, "bx", markersize=10, color="blue")
         if y_pred is not None:
-            plt.plot(row_inf+1, y_pred, "ro")
+            plt.plot(len(df_merge)+1, y_pred, "ro")
         plt.grid(True)
         if x_label:
             plt.xlabel(x_label, fontsize=16,)
         if y_label:
             plt.ylabel(y_label, fontsize=16)
         st.pyplot(fig)
-    show_7_days = df_merge['close'].iloc[len(df_merge)-row_inf:]
+    show_7_days = df_merge['close']
     show_7_days = show_7_days.reset_index(drop=True)
     plot_series(show_7_days, y_pred_real[0])
     st.markdown("""<hr style="height:5px;border:none;color:#333;background-color:#333;" /> """, unsafe_allow_html=True)
@@ -195,12 +259,14 @@ if predict==True:
     last_24_price = df_merge['close'].iloc[len(df_merge)-24].item()
     all_24_price = df_merge['close'].iloc[len(df_merge)-24:]
     all_24 = df_merge.iloc[len(df_merge)-24:]
-    all_720 = df_merge.iloc[:-1]
+    # df_merge_test = all_24.astype(str)
+    # st.write(df_merge_test)
+    all_720 = df_merge.iloc[:]
     st.subheader(f'Last 24h Price: ${last_24_price}')
     col1, col2, col3 = st.columns(3)
     col1.metric('24H Change(Ago)', '${0:,}'.format(np.round(last_close_price - last_24_price, 2)), f"{np.round(((last_close_price - last_24_price)*100/last_24_price), 2)}%")
-    col2.metric('24H High', '${0:,}'.format(all_24_price.max()) )
-    col3.metric('24H Low', '${0:,}'.format(all_24_price.min()))
+    col2.metric('24H High', '${0:,}'.format(all_24['high'].max()) )
+    col3.metric('24H Low', '${0:,}'.format(all_24['low'].min()))
 
     col1, col2 = st.columns(2)
     # col1.metric('24H Change(Avg)', '${0:,}'.format(np.round(last_close_price - all_24_price.mean(), 2)), f"{np.round(((all_24_price.mean() - last_close_price)*100/last_close_price), 2)}%")
@@ -210,16 +276,16 @@ if predict==True:
     #Plot
     # Removing the localization in 'close_time'
     # df['close_time'] = df['close_time'].dt.strftime('%Y-%m-%d %H:%M:%S')
-    df_plot = df_merge.iloc[len(df_merge)-row_inf:-1]
+    df_plot = df_merge.copy()
     df_plot['open_time_conv'] = pd.to_datetime(df['open_time_conv'], errors='coerce')
     df_plot.index = pd.DatetimeIndex(df_plot['open_time_conv'])
-    
+    df_plot.dropna(inplace=True)
     fig, ax = fplt.plot(
                 df_plot,
                 figsize=(20,5),
                 type='candle',
                 style='yahoo',
-                title='BTC - 2017 ~ 2022',
+                title='Last 7 days',
                 ylabel='Price ($)',
                 volume=True,
                 ylabel_lower='Shares\nTraded',
@@ -232,33 +298,35 @@ if predict==True:
     st.info("Notes:\nBlue Lines: 5 MA, Orange Lines: 10 MA")
 
     #---------------------Twitter Preprocessing----------------------------------------#
-    data = [text1, fol1, ver1]
+    # data = [text1, fol1, ver1]
 
-    columns = ['text', 'user_followers', 'user_verified']
-    new_data = pd.DataFrame([data], columns=columns)
-    new_data.loc[len(new_data)] = ([text2, fol2, ver2])
-    new_data.loc[len(new_data)] = ([text3, fol3, ver3])
+    # columns = ['text', 'user_followers', 'user_verified']
+    # new_data = pd.DataFrame([data], columns=columns)
+    # new_data.loc[len(new_data)] = ([text2, fol2, ver2])
+    # new_data.loc[len(new_data)] = ([text3, fol3, ver3])
 
-    sid = SentimentIntensityAnalyzer()
-    new_data['cleaned_text'] = new_data['text'].apply(cleaning)
-    new_data['vader'] = new_data['cleaned_text'].apply(lambda desc: sid.polarity_scores(desc))
-    new_data['compound'] = new_data['vader'].apply(lambda score_dict: score_dict['compound'])
+    # sid = SentimentIntensityAnalyzer()
+    # new_data['cleaned_text'] = new_data['text'].apply(cleaning)
+    # new_data['vader'] = new_data['cleaned_text'].apply(lambda desc: sid.polarity_scores(desc))
+    # new_data['compound'] = new_data['vader'].apply(lambda score_dict: score_dict['compound'])
 
-    new_data['impact_score_only'] = new_data.apply(generate_impact_score,axis=1)
+    # new_data['impact_score_only'] = new_data.apply(generate_impact_score,axis=1)
 
-    new_data['impact_score_var'] = new_data.apply(generate_impact_vad,axis=1)
-    new_data['impact_score_var_avg'] = new_data['impact_score_var'].mean()
+    # new_data['impact_score_var'] = new_data.apply(generate_impact_vad,axis=1)
+    # new_data['impact_score_var_avg'] = new_data['impact_score_var'].mean()
+    # st.markdown("""<hr style="height:5px;border:none;color:#333;background-color:#333;" /> """, unsafe_allow_html=True)
+    # st.title('Sentiment Evaluation')
+    # sentimen_result = new_data['impact_score_var_avg'].iloc[0]
+    # sentimen_eval = np.where(sentimen_result > 0.66, 'Positive 😎', np.where(sentimen_result < -0.66, 'Negative 🤒', 'Neutral/Unclear 🙂')).item()
     st.markdown("""<hr style="height:5px;border:none;color:#333;background-color:#333;" /> """, unsafe_allow_html=True)
     st.title('Sentiment Evaluation')
-    sentimen_result = new_data['impact_score_var_avg'].iloc[0]
-    sentimen_eval = np.where(sentimen_result > 0.66, 'Positive 😎', np.where(sentimen_result < -0.66, 'Negative 🤒', 'Neutral/Unclear 🙂')).item()
     col1, col2 = st.columns(2)
     neutral_exp = "Seems like there's no impactful tweets \nthat might bring effects on the market."
     negative_exp = "This might bring negative effects on the market \nespecially if this happening for several days. \nBe cautious with your trade!" 
     positive_exp = "This might bring positive effects on the market \n, but always keeping an eye and aware with real market conditions."
     sentimen_exp = np.where(sentimen_result > 0.66, positive_exp, np.where(sentimen_result < -0.66, negative_exp, neutral_exp)).item()
     with col1:
-        col1.metric('Sentiments For Today', sentimen_eval)
+        col1.metric('Tweet Sentiments For Today', sentimen_eval)
         col1.write(sentimen_exp)
     
     st.markdown("""<hr style="height:2px;border:none;color:#333;background-color:#333;" /> """, unsafe_allow_html=True)
@@ -269,16 +337,16 @@ if predict==True:
         col1.metric('24H Volume(USDT)', '${0:,}'.format(np.round(all_24['quote_asset_volume'].sum(),1)),  f"{np.round(((all_24['quote_asset_volume'].sum() - d30_avg)*100/d30_avg), 2)}%")
     with col2:
         
-        col2.metric('30D AVG Volume(USDT)', '${0:,}'.format(np.round(d30_avg,1)))
+        col2.metric('7D AVG Volume(USDT)', '${0:,}'.format(np.round(d30_avg,1)))
         # col2.metric('24H Volume(BTC)', '{0:,}'.format(np.round(all_24['volume'].sum())))
     
     col1, col2 = st.columns(2)
     with col1:
         d30_avg = all_720.groupby('days').sum()['quote_asset_volume'].mean()
-        last_2days = all_720.groupby('days').sum()['quote_asset_volume'].iloc[-2]
+        last_2days = all_720.groupby('days').sum()['quote_asset_volume'].iloc[-1]
         col1.metric('Today with Last Day Differences', '${0:,}'.format(np.round(all_24['quote_asset_volume'].sum() - last_2days,1)),  f"{np.round(((all_24['quote_asset_volume'].sum() - last_2days)*100/last_2days), 2)}%")
     with col2:
-        col2.metric('30D Standard Deviation', '${0:,}'.format(np.round(all_720.groupby('days').sum()['quote_asset_volume'].std(),1)))
+        col2.metric('7D Standard Deviation', '${0:,}'.format(np.round(all_720.groupby('days').sum()['quote_asset_volume'].std(),1)))
     
     st.markdown("""<hr style="height:2px;border:none;color:#333;background-color:#333;" /> """, unsafe_allow_html=True)
     st.subheader('By Volatility:')
@@ -289,9 +357,9 @@ if predict==True:
         d30_avg = all_720.groupby('days').mean()['close'].mean()
         col1.metric('24H Change(Ago)', '${0:,}'.format(np.round(last_close_price - last_24_price, 2)), f"{np.round(((last_close_price - last_24_price)*100/last_24_price), 2)}%")
     with col2:
-        col2.metric('30D AVG Change', '${0:,}'.format(np.round(last_close_price - d30_avg, 2)), f"{np.round(((last_close_price - d30_avg)*100/d30_avg), 2)}%")
+        col2.metric('7D AVG Change', '${0:,}'.format(np.round(last_close_price - d30_avg, 2)), f"{np.round(((last_close_price - d30_avg)*100/d30_avg), 2)}%")
     with col3:
-        col3.metric('30D Average Price', '${0:,}'.format(np.round(d30_avg, 2)))
+        col3.metric('7D Average Price', '${0:,}'.format(np.round(d30_avg, 2)))
 
     condition1 = var_scale.transform(np.array(new_data['impact_score_var']).reshape(-1,1))
     minmax_vol = MinMaxScaler()
